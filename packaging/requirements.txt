@@ -1,4 +1,0 @@
-# Runtime libraries bundled into the build. Tk itself comes from the build machine's Python.
-customtkinter>=6.0,<7
-Pillow>=11
-reportlab>=4

@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Meetings
-Comment=Meeting agendas, protocols and actions
-Exec=@APPDIR@/meetings
-Icon=@ICON@
-Terminal=false
-Categories=Office;
-StartupWMClass=meetings
