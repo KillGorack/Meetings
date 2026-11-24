@@ -15,7 +15,7 @@ pipx install git+https://github.com/KillGorack/meetings      # or: pipx install 
 meetings                                  # upgrade: pipx upgrade meetings   remove: pipx uninstall meetings
 meetings --install-menu                   # optional: adds it to the applications menu (--remove-menu undoes it)
 ```
-pipx keeps the app in its own private environment, so nothing else on the system is touched; your data (`~/.local/share/meetings`) is never removed. pipx only installs the command, so run `meetings --install-menu` once to add the menu entry (run `--remove-menu` before `pipx uninstall`). The tarball (`packaging/build_linux.sh`) adds one by itself.
+pipx keeps the app in its own private environment, so nothing else on the system is touched; your data (`~/.local/share/meetings`) is never removed. pipx only installs the command, so run `meetings --install-menu` once to add the menu entry (run `--remove-menu` before `pipx uninstall`).
 
 ## Data
 - **Project:** the top-level subject or meeting series (for example Logistics, Production). Every topic belongs to one. It also holds the meeting's **When** and **Where**, shown on the Protocol and Agenda. It is the first dropdown on the topic form, a filter on every list, and the title of every exported PDF. You maintain the list in Settings.
