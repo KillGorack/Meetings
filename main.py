@@ -78,7 +78,7 @@ class App(ctk.CTk):
 
         self.set_sidebar(self.settings.get("sidebar", True))
         self.build_pages()
-        self.bind("<Control-n>", lambda _e: self.guard(lambda: self.open_problem(None)))
+        self.bind("<Control-n>", lambda _e: self.guard(lambda: self.open_topic(None)))
         self.bind("<Control-f>", lambda _e: self.focus_search())
         self.bind("<Control-s>", lambda _e: self.detail.save() if self.detail is not None else None)
         self.bind("<Control-comma>", lambda _e: self.toggle_settings())
@@ -95,7 +95,7 @@ class App(ctk.CTk):
             w.destroy()
         self.detail = None
         self.pages = {}
-        for name, cls in (("Topics", views.ProblemsView), ("Protocol", views.ProtocolView),
+        for name, cls in (("Topics", views.TopicsView), ("Protocol", views.ProtocolView),
                           ("Agenda", views.AgendaView), ("Settings", views.SettingsView)):
             page = cls(self, self.container)
             page.grid(row=0, column=0, sticky="nsew")
@@ -133,7 +133,7 @@ class App(ctk.CTk):
         else:
             self.guard(lambda: self.show("Settings"))
 
-    def open_problem(self, pid) -> None:
+    def open_topic(self, pid) -> None:
         def go():
             if self.detail is not None:
                 self.detail.destroy()
@@ -159,7 +159,7 @@ class App(ctk.CTk):
             self.pages["Topics"].search.focus_set()
 
     def guard(self, proceed) -> None:
-        """Run proceed(), but first ask if the open problem has unsaved changes."""
+        """Run proceed(), but first ask if the open topic has unsaved changes."""
         if self.detail is not None and self.detail.dirty():
             if ui.dialog(self, "Discard changes?", "This topic has unsaved changes.",
                          ("Keep editing", "Discard"), danger=True) != "Discard":
@@ -200,7 +200,7 @@ class App(ctk.CTk):
         pid = self.detail.pid if self.detail is not None else None
         self.build_pages()
         if pid:
-            self.open_problem(pid)
+            self.open_topic(pid)
         self.note(f"Text size {size}")
 
     def save(self, values: dict) -> None:
@@ -220,7 +220,7 @@ class App(ctk.CTk):
                                       mustexist=False)
         if not new or Path(new) == self.store.image_dir:
             return
-        n = len(self.store.problem_folders())
+        n = len(self.store.topic_folders())
         if n and ui.dialog(self, "Move topic folders?", f"Move the {n} existing topic folder"
                            f"{'s' if n != 1 else ''} (pictures and any files you added) to the new folder?",
                            ("Cancel", "Move folders")) != "Move folders":
@@ -309,11 +309,11 @@ def selftest() -> int:
     folder = Path(tempfile.mkdtemp())
     store = db.Store(folder / "selftest.db")
     store.seed_demo()
-    if len(store.problems()) < 3:
+    if len(store.topics()) < 3:
         problems.append("database round-trip failed")
     try:
-        p = store.get_problem(1)
-        pdf_export.problem_sheet(str(folder / "sheet.pdf"), p, store.actions(1),
+        p = store.get_topic(1)
+        pdf_export.topic_sheet(str(folder / "sheet.pdf"), p, store.actions(1),
                                  [i["path"] for i in store.images(1)])
         if not (folder / "sheet.pdf").stat().st_size > 1000:
             problems.append("PDF came out empty")
@@ -366,7 +366,7 @@ def main() -> None:
         app.current = a.page
         app.show(a.page)
     if a.open:
-        app.open_problem(a.open)
+        app.open_topic(a.open)
     app.mainloop()
 
 

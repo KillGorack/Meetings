@@ -56,7 +56,7 @@ def open_path(app, path):
         ui.dialog(app, "Could not open the folder", f"{path}\n\n{e}", ("OK",))
 
 
-def problem_columns():
+def topic_columns():
     return [
         {"key": "dot", "title": "", "weight": 0.7, "image": True, "size": 14,
          "sortkey": lambda r: -r["severity_rank"]},
@@ -72,7 +72,7 @@ def problem_columns():
     ]
 
 
-def problem_rows(rows):
+def topic_rows(rows):
     return [{"_id": p["id"], "dot": f"dot:{p['severity_color']}", "severity_rank": p["severity_rank"] or 0,
              "no": db.number(p["id"]), "project": p["project"] or "", "title": p["title"], "severity": p["severity"],
              "category": p["category"] or "", "subcategory": p["subcategory"] or "",
@@ -81,7 +81,7 @@ def problem_rows(rows):
              "open_actions": p["open_actions"]} for p in rows]
 
 
-def problem_color(row, key):
+def topic_color(row, key):
     if row["status"] == "Closed" and key in ("status", "title"):
         return "muted"
     return None
@@ -141,7 +141,7 @@ def title_label(parent, text):
 
 def title_only(parent, text, icon=None):
     """Title bar for a page with no buttons on it: same height as the ones that have icon buttons.
-    The icon sits where the + sits on Problems, so the titles line up from page to page."""
+    The icon sits where the + sits on Topics, so the titles line up from page to page."""
     top = ui.Panel(parent)
     if icon:
         ctk.CTkLabel(top, text="", image=ui.icon(icon), width=ui.BTN, height=ui.BTN).pack(
@@ -211,7 +211,7 @@ class Sidebar(ui.Panel):
                         image=ui.icon(icon, "text_strong" if on else "muted"))
 
 
-# The report accent (light theme, dark theme): Category, Sub-category and problem titles, screen and PDF.
+# The report accent (light theme, dark theme): Category, Sub-category and topic titles, screen and PDF.
 REPORT_ACCENT = ("#1E7F6E", "#5CC8B0")
 
 
@@ -227,17 +227,17 @@ def meeting_line(project):
 
 
 def attendees(rows):
-    """Everyone named on an action of these problems, once each, A-Z."""
+    """Everyone named on an action of these topics, once each, A-Z."""
     return sorted({a["owner"] for p in rows for a in p.get("_actions", []) if a["owner"]}, key=str.lower)
 
 
 class ProtocolView(ctk.CTkFrame):
     """A grouped, read-only report, like an Access report:
-        Project > Category > Sub-category > Problem (title, description) > its actions.
-    Problems without a sub-category sit directly under their Category (before the sub-categories);
-    problems without a category go under "(no category)" at the end."""
+        Project > Category > Sub-category > Topic (title, description) > its actions.
+    Topics without a sub-category sit directly under their Category (before the sub-categories);
+    topics without a category go under "(no category)" at the end."""
     NAME, ICON = "Protocol", "scroll-text"
-    DETAIL = True                   # description and actions under each problem (the Agenda leaves them out)
+    DETAIL = True                   # description and actions under each topic (the Agenda leaves them out)
     FILTERS = ("Open", "Closed", "All")
     STEP = 26                       # indent per level, pixels
 
@@ -295,7 +295,7 @@ class ProtocolView(ctk.CTkFrame):
     def refresh(self):
         sync_project_select(self.app, self.project)
         f = self.filter.get()
-        self.rows = self.store.problems("", None if f == "All" else (f,), project_id(self.store, self.app.project))
+        self.rows = self.store.topics("", None if f == "All" else (f,), project_id(self.store, self.app.project))
         for p in self.rows:
             p["_actions"] = self.store.actions(p["id"])
         n = len(self.rows)
@@ -312,7 +312,7 @@ class ProtocolView(ctk.CTkFrame):
             "meeting":  dict(font=ui.font(base), foreground=ui.cur("muted"), spacing3=4),
             "category": dict(font=ui.font(mid + 1, "bold"), foreground=report_accent(), spacing1=12),
             "sub":      dict(font=ui.font(base, "bold"), foreground=report_accent(), spacing1=8),
-            "problem":  dict(font=ui.font(base), foreground=report_accent(), spacing1=8),
+            "topic":  dict(font=ui.font(base), foreground=report_accent(), spacing1=8),
             "action":   dict(font=ui.font(base), foreground=ui.cur("text"), spacing1=2),
             "acthead":  dict(font=ui.font(base, "bold"), foreground=ui.cur("text_strong"), spacing1=6),
             "names":    dict(font=ui.font(base - 1), foreground=ui.cur("muted"), spacing1=1),
@@ -338,7 +338,7 @@ class ProtocolView(ctk.CTkFrame):
         who_w = max([f.measure(a["owner"] or "") for a in acts] + [f.measure("Who")])
         stage_w = max(f.measure(s) for s in db.ACTION_STAGES + ("Stage",))
         due_w = f.measure("2026-12-31")
-        x_action = 6 + 4 * self.STEP                    # one step in from the deepest problem
+        x_action = 6 + 4 * self.STEP                    # one step in from the deepest topic
         room = max(self.text._textbox.winfo_width(), 700) - x_action - who_w - stage_w - due_w - 3 * gap - 30
         action_w = max(220, min(max([f.measure(a["description"]) for a in acts] + [0]), room))
         x_who = x_action + action_w + gap
@@ -377,16 +377,16 @@ class ProtocolView(ctk.CTkFrame):
                 t.insert("end", text, tags)
             t.insert("end", "\n", (style, f"L{level}") + (("cols",) if style in ("action", "acthead") else ()))
 
-        def problem(p, level):
+        def topic(p, level):
             info = "   " + "  |  ".join(x for x in (p["severity"], p["champion"],
                                                     p["status"] if p["status"] != "Open" else "") if x)
             if not self.DETAIL:                     # agenda: the title and who discusses it (its action owners)
-                line(level, "problem", f"{db.number(p['id'])}   {p['title']}")
+                line(level, "topic", f"{db.number(p['id'])}   {p['title']}")
                 who = ", ".join(attendees([p]))
                 if who:                                             # names under the title, same indent
                     line(level, "names", who)
                 return
-            line(level, "problem", f"{db.number(p['id'])}   {p['title']}", (info, "muted"))
+            line(level, "topic", f"{db.number(p['id'])}   {p['title']}", (info, "muted"))
             if p["description"].strip():
                 line(level, "desc", p["description"].strip())
             if not p["_actions"]:
@@ -419,23 +419,23 @@ class ProtocolView(ctk.CTkFrame):
             for cat, direct, subs in cats:                          # one step in from the project / title
                 line(1, "category", cat)
                 for p in direct:                                    # no sub-category: right under it
-                    problem(p, 2)
-                for sub, problems in subs:
+                    topic(p, 2)
+                for sub, topics in subs:
                     line(2, "sub", sub)
-                    for p in problems:
-                        problem(p, 3)
+                    for p in topics:
+                        topic(p, 3)
         self.text.configure(state="disabled")
 
 
 class AgendaView(ProtocolView):
-    """The Protocol, stripped: same grouping and indentation, problem titles only, and the attendees
-    (everyone named on an action of the listed problems)."""
+    """The Protocol, stripped: same grouping and indentation, topic titles only, and the attendees
+    (everyone named on an action of the listed topics)."""
     NAME, ICON = "Agenda", "calendar"
     DETAIL = False
 
 
-# ---------------------------------------------------------------- problems list
-class ProblemsView(ctk.CTkFrame):
+# ---------------------------------------------------------------- topics list
+class TopicsView(ctk.CTkFrame):
     FILTERS = ("Open", "Closed", "All")
 
     def __init__(self, app, parent):
@@ -447,7 +447,7 @@ class ProblemsView(ctk.CTkFrame):
         # title in its own panel, like Settings
         top = ui.Panel(self)
         top.grid(row=0, column=0, sticky="ew", padx=(0, GUTTER), pady=(0, GUTTER))
-        ui.icon_button(top, "plus", lambda: app.guard(lambda: app.open_problem(None)),
+        ui.icon_button(top, "plus", lambda: app.guard(lambda: app.open_topic(None)),
                        "New topic (Ctrl+N)").pack(side="left", padx=(8, 0), pady=6)
         title_label(top, "Topics").pack(side="left", padx=(2, 0))
         ui.icon_button(top, "file-down", self.export, "Export the list as PDF").pack(side="right", padx=(0, 6), pady=6)
@@ -471,8 +471,8 @@ class ProblemsView(ctk.CTkFrame):
         self.filter.set("Open")
         self.filter.pack(side="left", padx=(GAP, 0))
 
-        self.table = ui.data_table(p, problem_columns(), color_fn=problem_color, sort=("no", True),
-                                   on_open=lambda r: app.open_problem(r["_id"]),
+        self.table = ui.data_table(p, topic_columns(), color_fn=topic_color, sort=("no", True),
+                                   on_open=lambda r: app.open_topic(r["_id"]),
                                    empty_text="No topics match. Press Ctrl+N to add one.")
         self.table.grid(row=2, column=0, sticky="nsew", padx=IN, pady=0)
         ui.label(p, "Click a column to sort. Double-click a row to open it.", muted=True,
@@ -486,7 +486,7 @@ class ProblemsView(ctk.CTkFrame):
         sync_project_select(self.app, self.project)
         f = self.filter.get()
         statuses = None if f == "All" else (f,)
-        rows = problem_rows(self.store.problems(self.search.get(), statuses,
+        rows = topic_rows(self.store.topics(self.search.get(), statuses,
                                                 project_id(self.store, self.app.project)))
         self.table.set_rows(rows)
         self.count.configure(text=f"{len(rows)} topic{'s' if len(rows) != 1 else ''}")
@@ -512,7 +512,7 @@ class ProblemsView(ctk.CTkFrame):
 
 
 # ---------------------------------------------------------------- action dialog
-def action_dialog(app, action, problem_id, people, default_owner=""):
+def action_dialog(app, action, topic_id, people, default_owner=""):
     """Add/edit one action. Returns a dict for Store.save_action, or None if cancelled."""
     dlg = ui.modal(app, "Edit action" if action else "Add action")
     result = {"v": None}
@@ -555,7 +555,7 @@ def action_dialog(app, action, problem_id, people, default_owner=""):
             return
         owner = next((p["id"] for p in people if p["name"] == who.get()), None)
         st = stage.get()
-        result["v"] = dict(id=a.get("id"), problem_id=problem_id, description=text, owner_id=owner, due_date=d,
+        result["v"] = dict(id=a.get("id"), topic_id=topic_id, description=text, owner_id=owner, due_date=d,
                            status=st, done_date=(a.get("done_date") or db.today()) if st == db.ACTION_DONE else "")
         dlg.destroy()
 
@@ -577,7 +577,7 @@ def action_dialog(app, action, problem_id, people, default_owner=""):
     return result["v"]
 
 
-# ---------------------------------------------------------------- problem detail
+# ---------------------------------------------------------------- topic detail
 class DetailView(ctk.CTkFrame):
     def __init__(self, app, parent, pid):
         super().__init__(parent, fg_color="transparent")
@@ -614,7 +614,7 @@ class DetailView(ctk.CTkFrame):
 
         scroll = self.scroll = ui.scroll_frame(self)
         scroll.grid(row=1, column=0, sticky="nsew")
-        self._problem_card(scroll)
+        self._topic_card(scroll)
         self._actions_card(scroll)
         self._pictures_card(scroll)
 
@@ -627,7 +627,7 @@ class DetailView(ctk.CTkFrame):
         self.fields[key] = (ctl, err)
         return f
 
-    def _problem_card(self, parent):
+    def _topic_card(self, parent):
         card = ui.section(parent, "Topic")
         card.pack(fill="x", padx=(0, GUTTER), pady=(0, GUTTER))
         b = card.body
@@ -645,7 +645,7 @@ class DetailView(ctk.CTkFrame):
                  ("category", "Category", lambda p: ui.quiet_select(p, cat_names, lambda _v: self._sync_subs())),
                  ("subcategory", "Sub-category", lambda p: ui.quiet_select(p, [db.NONE])),
                  ("champion", "Champion", lambda p: ui.quiet_select(p, ppl_names)),
-                 ("status", "Status", lambda p: ui.quiet_select(p, list(db.PROBLEM_STATUSES)))]
+                 ("status", "Status", lambda p: ui.quiet_select(p, list(db.TOPIC_STATUSES)))]
         for i, (key, label, make) in enumerate(small):
             self._field(b, key, label, make).grid(row=1, column=i, sticky="ew",
                                                   padx=gap if i < len(small) - 1 else 0, pady=low)
@@ -718,7 +718,7 @@ class DetailView(ctk.CTkFrame):
         return self.values() != self.snapshot
 
     def _load(self):
-        p = self.store.get_problem(self.pid) if self.pid else None
+        p = self.store.get_topic(self.pid) if self.pid else None
         default_project = (self.app.project or self.store.last_project()
                            or (self.projects[0]["name"] if self.projects else ""))
         names = [x["name"] for x in self.sevs]
@@ -777,11 +777,11 @@ class DetailView(ctk.CTkFrame):
         closed = (was_closed or db.today()) if v["status"] == "Closed" else ""
         proj = next((p["id"] for p in self.projects if p["name"] == v["project"]), None)
         sev = next((x["id"] for x in self.sevs if x["name"] == v["severity"]), None)
-        self.pid = self.store.save_problem(dict(
+        self.pid = self.store.save_topic(dict(
             id=self.pid, project_id=proj, title=v["title"], severity_id=sev, description=v["description"],
             root_cause=v["root_cause"], category_id=cat, subcategory_id=sub, champion_id=champ, status=v["status"],
             closed_date=closed))
-        self.record = self.store.get_problem(self.pid)
+        self.record = self.store.get_topic(self.pid)
         self.snapshot = v
         self._refresh_header()
         self.refresh_actions()
@@ -799,7 +799,7 @@ class DetailView(ctk.CTkFrame):
         if ui.dialog(self.app, f"Delete {db.number(self.pid)}?", f"This deletes the topic{extra} and the "
                      f"pictures attached to it. It cannot be undone.{keep}", ("Cancel", "Delete"),
                      danger=True) == "Delete":
-            self.store.delete_problem(self.pid)
+            self.store.delete_topic(self.pid)
             self.snapshot = self.values()
             self.app.note(f"Deleted {db.number(self.pid)}")
             self.app.close_detail()
@@ -810,16 +810,16 @@ class DetailView(ctk.CTkFrame):
             return
         if self.dirty() and not self.save():
             return
-        p, acts = self.store.get_problem(self.pid), self.store.actions(self.pid)
+        p, acts = self.store.get_topic(self.pid), self.store.actions(self.pid)
         pics = [i["path"] for i in self.store.images(self.pid) if i["path"].exists()]
-        run_pdf(self.app, lambda path: pdf_export.problem_sheet(path, p, acts, pics), f"{db.number(self.pid)}.pdf")
+        run_pdf(self.app, lambda path: pdf_export.topic_sheet(path, p, acts, pics), f"{db.number(self.pid)}.pdf")
 
     # ---- folder ------------------------------------------------------
     def open_folder(self):
         if not self.pid:
             self.app.note("Save the topic first.")
             return
-        open_path(self.app, self.store.problem_dir(self.pid, create=True))
+        open_path(self.app, self.store.topic_dir(self.pid, create=True))
 
     # ---- pictures ----------------------------------------------------
     THUMB = 92
@@ -894,9 +894,9 @@ class DetailView(ctk.CTkFrame):
 
     # ---- actions -----------------------------------------------------
     def _sync_record(self):
-        """Re-read the saved problem so the Created/Updated line reflects action and picture changes."""
+        """Re-read the saved topic so the Created/Updated line reflects action and picture changes."""
         if self.pid:
-            self.record = self.store.get_problem(self.pid)
+            self.record = self.store.get_topic(self.pid)
             self._refresh_header()
 
     def refresh_actions(self):
@@ -991,7 +991,7 @@ class SettingsView(ctk.CTkFrame):
 
     def _severity_editor(self, row, col):
         """Severity levels, lowest first (the order is the ranking). + adds; per row: arrows, pencil, trash.
-        The color is the dot used on the Problems list, the form and the PDFs."""
+        The color is the dot used on the Topics list, the form and the PDFs."""
         app, store = self.app, self.store
         card = ui.section(self.body, "Severity levels", on_add=lambda: add_level(), add_tip="Add severity level")
         card.grid(row=row, column=col, sticky="nsew", padx=(0, GUTTER) if col == 0 else 0, pady=(GUTTER, 0))

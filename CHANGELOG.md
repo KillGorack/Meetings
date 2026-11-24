@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.0.1 - 2026-11-24
+- Internal rename: problems are now topics throughout (database table, code, demo data). Legacy columns and old-database migrations removed; a fresh database is needed.
+
 ## 2.0.0 - 2026-11-24  (Meetings)
 - Renamed from Problem Sheets to Meetings: a tool for meeting agendas and protocols. Command `meetings`, data in `~/.local/share/meetings/meetings.db`.
 - Starts with a fresh database; nothing is migrated from Problem Sheets.

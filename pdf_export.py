@@ -1,4 +1,4 @@
-"""PDF output: one problem sheet, and a table of open items. Needs reportlab
+"""PDF output: one topic sheet, and a table of open items. Needs reportlab
 (Fedora: sudo dnf install python3-reportlab). Print output is deliberately neutral
 black/white/gray, not the on-screen theme."""
 from __future__ import annotations
@@ -82,8 +82,8 @@ def _cover_picture(pth, box_w, box_h, dpi=220):
     return RLImage(buf, width=box_w, height=box_h)
 
 
-def problem_sheet(path: str, p: dict, actions: list[dict], pictures: list | None = None) -> None:
-    """One problem on a landscape page, laid out like a standard form:
+def topic_sheet(path: str, p: dict, actions: list[dict], pictures: list | None = None) -> None:
+    """One topic on a landscape page, laid out like a standard form:
         [dot] TS-0003  Title
         Category >> Sub-category | Created / Updated             | picture box
         Champion                 |                               |
@@ -249,13 +249,13 @@ def open_items(path: str, title: str, columns: list[tuple[str, float]], rows: li
 def protocol(path: str, project: str, subtitle: str, rows: list[dict], meeting: str = "",
              accent: str = "#000000", title: str = "Protocol", detail: bool = True,
              attendees: list[str] | None = None) -> None:
-    """The Protocol report: Project > Category > Sub-category > Problem (title, description) > actions.
-    rows: problems from Store.problems, each with its actions under "_actions".
+    """The Protocol report: Project > Category > Sub-category > Topic (title, description) > actions.
+    rows: topics from Store.topics, each with its actions under "_actions".
     Every action table sits at the same indent with the same column widths, so the columns line up
     down the whole document.
     Title: "Protocol - <project>"; meeting: the 'When: ... | Where: ...' line under it. accent: the color of
-    Category (larger, bold), Sub-category (bold) and problem titles.
-    The Agenda is the same report with title="Agenda", detail=False (problem titles only) and the
+    Category (larger, bold), Sub-category (bold) and topic titles.
+    The Agenda is the same report with title="Agenda", detail=False (topic titles only) and the
     attendees listed under the meeting line."""
     r = _rl()
     colors, mm = r["colors"], r["mm"]
@@ -285,7 +285,7 @@ def protocol(path: str, project: str, subtitle: str, rows: list[dict], meeting: 
                                  bottomMargin=18 * mm, title=f"Protocol {project}", author="Meetings")
     width = page[0] - 32 * mm
     step = 6 * mm                                   # indent per level
-    act_level = 4                                   # action tables: one step past the deepest problem
+    act_level = 4                                   # action tables: one step past the deepest topic
     act_w = width - act_level * step
     col_w = [act_w * .52, act_w * .19, act_w * .15, act_w * .14]
 
@@ -303,14 +303,14 @@ def protocol(path: str, project: str, subtitle: str, rows: list[dict], meeting: 
         """The flowables, indented to a level."""
         return [Indenter(left=level * step)] + flowables + [Indenter(left=-level * step)]
 
-    pending = []                                    # headings waiting for their first problem
+    pending = []                                    # headings waiting for their first topic
 
     def heading(text, style, level):
-        """Group headings ride along in the next problem's keep-together block, so a heading never
+        """Group headings ride along in the next topic's keep-together block, so a heading never
         ends up alone at the bottom of a page."""
         pending.append(_para(text, P(f"{style.name}{level}", parent=style, leftIndent=level * step)))
 
-    def problem(p, level):
+    def topic(p, level):
         info = "  |  ".join(x for x in (p["severity"], p.get("champion"),
                                         p["status"] if p["status"] != "Open" else "") if x)
         head = (f"{escape(db.number(p['id']))}&nbsp;&nbsp;&nbsp;{escape(p['title'])}&nbsp;&nbsp;&nbsp;"
@@ -345,7 +345,7 @@ def protocol(path: str, project: str, subtitle: str, rows: list[dict], meeting: 
             block += [Spacer(1, 1 * mm)] + at(act_level, [_para("No actions.", cell_gray)])
         block = pending + block
         pending.clear()
-        return [KeepTogether(block)]          # a problem never splits from its actions across pages
+        return [KeepTogether(block)]          # a topic never splits from its actions across pages
 
     if not rows:
         story.append(_para("No topics match this project and filter.", base))
@@ -356,11 +356,11 @@ def protocol(path: str, project: str, subtitle: str, rows: list[dict], meeting: 
         for cat, direct, subs in cats:
             heading(cat, h_cat, 1)            # one step in from the project / title
             for p in direct:                  # no sub-category: right under the category
-                story += problem(p, 2)
-            for sub, problems in subs:
+                story += topic(p, 2)
+            for sub, topics in subs:
                 heading(sub, h_sub, 2)
-                for p in problems:
-                    story += problem(p, 3)
+                for p in topics:
+                    story += topic(p, 3)
 
     f = _footer(f"{project}  |  {title}")
     doc.build(story, onFirstPage=f, onLaterPages=f)

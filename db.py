@@ -1,4 +1,4 @@
-"""SQLite storage for Meetings: topics (problems), their actions, and the maintained pick lists
+"""SQLite storage for Meetings: topics (topics), their actions, and the maintained pick lists
 (categories, people/champions). One local file, no server."""
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 DEFAULT_SEVERITIES = (("Low", "#3B82C4"), ("Medium", "#F2B01E"), ("High", "#D32F2F"))   # name, color; low -> high
-PROBLEM_STATUSES = ("Open", "Closed")
+TOPIC_STATUSES = ("Open", "Closed")
 ACTIVE = ("Open",)
 ACTION_STAGES = ("Planning", "Defined", "Implemented", "Verified")   # completion; open until Verified
 ACTION_DONE = "Verified"
@@ -36,38 +36,36 @@ CREATE TABLE IF NOT EXISTS subcategories (
     name TEXT NOT NULL COLLATE NOCASE,
     UNIQUE(category_id, name)
 );
-CREATE TABLE IF NOT EXISTS problems (
+CREATE TABLE IF NOT EXISTS topics (
     id INTEGER PRIMARY KEY,
     project_id INTEGER REFERENCES projects(id) ON DELETE RESTRICT,
     title TEXT NOT NULL,
     severity_id INTEGER REFERENCES severities(id) ON DELETE RESTRICT,
-    severity TEXT NOT NULL DEFAULT 'Medium',   -- legacy, unused: severity_id replaced it
     description TEXT NOT NULL DEFAULT '',
     root_cause TEXT NOT NULL DEFAULT '',
     category_id INTEGER REFERENCES categories(id) ON DELETE RESTRICT,
     subcategory_id INTEGER REFERENCES subcategories(id) ON DELETE RESTRICT,
     champion_id INTEGER REFERENCES people(id) ON DELETE RESTRICT,
     status TEXT NOT NULL DEFAULT 'Open',
-    reported_date TEXT NOT NULL,     -- legacy, unused: created_at is the creation date
-    due_date TEXT NOT NULL DEFAULT '',   -- legacy, unused: due dates live on actions
     closed_date TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS images (
     id INTEGER PRIMARY KEY,
-    problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+    topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
     file TEXT NOT NULL,              -- path relative to the pictures folder
     added_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS actions (
     id INTEGER PRIMARY KEY,
-    problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+    topic_id INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
     description TEXT NOT NULL,
     owner_id INTEGER REFERENCES people(id) ON DELETE RESTRICT,
     due_date TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'Planning',
-    done_date TEXT NOT NULL DEFAULT ''
+    done_date TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -76,10 +74,10 @@ NO_CATEGORY = "(no category)"
 
 
 def protocol_groups(rows: list[dict]) -> list[tuple]:
-    """Problems grouped for the Protocol (screen and PDF):
-        [(project, [(category, [problems with no sub-category], [(sub-category, [problems])])])]
-    Problems without a sub-category sit directly under their category; problems without a category go
-    under NO_CATEGORY, last. Names sort alphabetically, problems by number."""
+    """Topics grouped for the Protocol (screen and PDF):
+        [(project, [(category, [topics with no sub-category], [(sub-category, [topics])])])]
+    Topics without a sub-category sit directly under their category; topics without a category go
+    under NO_CATEGORY, last. Names sort alphabetically, topics by number."""
     tree: dict = {}
     for p in rows:
         tree.setdefault(p["project"] or "", {}).setdefault(p["category"] or NO_CATEGORY, {}) \
@@ -139,45 +137,16 @@ class Store:
         if image_dir:
             self.image_dir = Path(image_dir)
         else:
-            new, old = self.path.parent / f"{self.path.stem}-files", self.path.parent / f"{self.path.stem}-pictures"
-            self.image_dir = old if old.exists() and not new.exists() else new
+            self.image_dir = self.path.parent / f"{self.path.stem}-files"
         self.db = sqlite3.connect(self.path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
-        # databases from before Projects: add the column, put everything in the default project
-        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(problems)")}
-        if "project_id" not in cols:
-            self.db.execute("ALTER TABLE problems ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE RESTRICT")
         if not self.db.execute("SELECT 1 FROM projects").fetchone():
             self.db.execute("INSERT INTO projects(name) VALUES (?)", (DEFAULT_PROJECT,))
-        self.db.execute("UPDATE problems SET project_id=(SELECT MIN(id) FROM projects) WHERE project_id IS NULL")
-        # severities became an editable list with colors: seed it, then point old problems at it
         if not self.db.execute("SELECT 1 FROM severities").fetchone():
             self.db.executemany("INSERT INTO severities(name, color, sort_order) VALUES (?,?,?)",
                                 [(n, c, i + 1) for i, (n, c) in enumerate(DEFAULT_SEVERITIES)])
-        if "severity_id" not in cols:
-            self.db.execute("ALTER TABLE problems ADD COLUMN severity_id INTEGER REFERENCES severities(id) ON DELETE RESTRICT")
-        self.db.execute("UPDATE problems SET severity_id=(SELECT id FROM severities WHERE name=problems.severity) "
-                        "WHERE severity_id IS NULL")
-        self.db.execute("UPDATE problems SET severity_id=(SELECT id FROM severities ORDER BY sort_order LIMIT 1 OFFSET 1) "
-                        "WHERE severity_id IS NULL")
-        # actions got a hand-set order (move up / down); older rows keep their creation order
-        if "sort_order" not in {r["name"] for r in self.db.execute("PRAGMA table_info(actions)")}:
-            self.db.execute("ALTER TABLE actions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
-            self.db.execute("UPDATE actions SET sort_order=id")
-        # projects got a meeting time and place (shown on the Protocol)
-        pcols = {r["name"] for r in self.db.execute("PRAGMA table_info(projects)")}
-        for col in ("meeting_when", "meeting_where"):
-            if col not in pcols:
-                self.db.execute(f"ALTER TABLE projects ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
-        # sub-categories came later: add the column, left empty
-        if "subcategory_id" not in cols:
-            self.db.execute("ALTER TABLE problems ADD COLUMN subcategory_id INTEGER "
-                            "REFERENCES subcategories(id) ON DELETE RESTRICT")
-        # older databases had four problem statuses; there are two now
-        self.db.execute("UPDATE problems SET status='Open' WHERE status='In progress'")
-        self.db.execute("UPDATE problems SET status='Closed' WHERE status='Resolved'")
         if not self.db.execute("SELECT 1 FROM categories").fetchone():
             self.db.executemany("INSERT INTO categories(name) VALUES (?)", [(c,) for c in DEFAULT_CATEGORIES])
         self.db.commit()
@@ -293,14 +262,14 @@ class Store:
             self.db.rollback()
             raise InUse() from e
 
-    # ---- problems ----------------------------------------------------
-    _PROBLEM_SQL = """
+    # ---- topics ----------------------------------------------------
+    _TOPIC_SQL = """
         SELECT p.id, p.project_id, p.title, p.severity_id, p.description, p.root_cause, p.category_id, p.subcategory_id,
                p.champion_id, p.status, p.closed_date, p.created_at, p.updated_at,
                sv.name AS severity, sv.color AS severity_color, sv.sort_order AS severity_rank,
                pr.name AS project, c.name AS category, sc.name AS subcategory, h.name AS champion,
-               (SELECT COUNT(*) FROM actions a WHERE a.problem_id = p.id AND a.status <> 'Verified') AS open_actions
-        FROM problems p
+               (SELECT COUNT(*) FROM actions a WHERE a.topic_id = p.id AND a.status <> 'Verified') AS open_actions
+        FROM topics p
         LEFT JOIN severities sv ON sv.id = p.severity_id
         LEFT JOIN projects pr ON pr.id = p.project_id
         LEFT JOIN categories c ON c.id = p.category_id
@@ -308,9 +277,9 @@ class Store:
         LEFT JOIN people h ON h.id = p.champion_id
     """
 
-    def problems(self, search: str = "", statuses: tuple[str, ...] | None = None,
+    def topics(self, search: str = "", statuses: tuple[str, ...] | None = None,
                  project_id: int | None = None) -> list[dict]:
-        sql, args = self._PROBLEM_SQL + " WHERE 1=1", []
+        sql, args = self._TOPIC_SQL + " WHERE 1=1", []
         if project_id:
             sql += " AND p.project_id = ?"
             args.append(project_id)
@@ -325,47 +294,47 @@ class Store:
         return [dict(r) for r in self.db.execute(sql + " ORDER BY p.id DESC", args)]
 
     def last_project(self) -> str | None:
-        """Project of the most recently created problem (the default for the next new one)."""
-        row = self.db.execute("SELECT pr.name FROM problems p JOIN projects pr ON pr.id = p.project_id "
+        """Project of the most recently created topic (the default for the next new one)."""
+        row = self.db.execute("SELECT pr.name FROM topics p JOIN projects pr ON pr.id = p.project_id "
                               "ORDER BY p.id DESC LIMIT 1").fetchone()
         return row[0] if row else None
 
-    def get_problem(self, pid: int) -> dict | None:
-        row = self.db.execute(self._PROBLEM_SQL + " WHERE p.id = ?", (pid,)).fetchone()
+    def get_topic(self, pid: int) -> dict | None:
+        row = self.db.execute(self._TOPIC_SQL + " WHERE p.id = ?", (pid,)).fetchone()
         return dict(row) if row else None
 
     def touch(self, pid: int) -> None:
-        """Mark a problem as updated now (called for any change to it, its actions or pictures)."""
-        self.db.execute("UPDATE problems SET updated_at=? WHERE id=?", (_now(), pid))
+        """Mark a topic as updated now (called for any change to it, its actions or pictures)."""
+        self.db.execute("UPDATE topics SET updated_at=? WHERE id=?", (_now(), pid))
         self.db.commit()
 
-    def save_problem(self, d: dict) -> int:
+    def save_topic(self, d: dict) -> int:
         """Insert (no 'id') or update. created_at is set once; updated_at on every save."""
         cols = ("project_id", "title", "severity_id", "description", "root_cause", "category_id", "subcategory_id",
                 "champion_id", "status", "closed_date")
         d = {"subcategory_id": None, **d}
         now = _now()
         if d.get("id"):
-            self.db.execute(f"UPDATE problems SET {', '.join(c + '=?' for c in cols)}, updated_at=? WHERE id=?",
+            self.db.execute(f"UPDATE topics SET {', '.join(c + '=?' for c in cols)}, updated_at=? WHERE id=?",
                             [d[c] for c in cols] + [now, d["id"]])
             pid = d["id"]
         else:
             cur = self.db.execute(
-                f"INSERT INTO problems({', '.join(cols)}, reported_date, due_date, created_at, updated_at) "
-                f"VALUES ({','.join('?' * len(cols))}, ?, '', ?, ?)",
-                [d[c] for c in cols] + [today(), d.get("created_at", now), d.get("updated_at", now)])
+                f"INSERT INTO topics({', '.join(cols)}, created_at, updated_at) "
+                f"VALUES ({','.join('?' * len(cols))}, ?, ?)",
+                [d[c] for c in cols] + [d.get("created_at", now), d.get("updated_at", now)])
             pid = cur.lastrowid
         self.db.commit()
         return pid
 
-    def delete_problem(self, pid: int) -> None:
-        """Delete the record, its actions and the pictures the app attached. The problem's folder
+    def delete_topic(self, pid: int) -> None:
+        """Delete the record, its actions and the pictures the app attached. The topic's folder
         and any files you put there are never touched (only removed if completely empty)."""
         for img in self.images(pid):
             self._remove_file(img["path"])
-        self.db.execute("DELETE FROM problems WHERE id=?", (pid,))
+        self.db.execute("DELETE FROM topics WHERE id=?", (pid,))
         self.db.commit()
-        for folder in (self.problem_dir(pid) / "pictures", self.problem_dir(pid)):
+        for folder in (self.topic_dir(pid) / "pictures", self.topic_dir(pid)):
             try:
                 folder.rmdir()                 # only succeeds when empty
             except OSError:
@@ -381,7 +350,7 @@ class Store:
         except OSError:
             pass
 
-    def problem_dir(self, pid: int, create: bool = False) -> Path:
+    def topic_dir(self, pid: int, create: bool = False) -> Path:
         """<files folder>/TS-0003 - yours to fill with evidence, analyses, anything. The app only
         keeps its own pictures in the 'pictures' sub-folder."""
         folder = self.image_dir / number(pid)
@@ -390,81 +359,81 @@ class Store:
         return folder
 
     def user_file_count(self, pid: int) -> int:
-        """Files in the problem folder that the app did not put there (for the delete warning)."""
-        folder = self.problem_dir(pid)
+        """Files in the topic folder that the app did not put there (for the delete warning)."""
+        folder = self.topic_dir(pid)
         if not folder.exists():
             return 0
         managed = {img["path"].resolve() for img in self.images(pid)}
         return sum(1 for f in folder.rglob("*") if f.is_file() and f.resolve() not in managed)
 
     def images(self, pid: int) -> list[dict]:
-        rows = self.db.execute("SELECT * FROM images WHERE problem_id=? ORDER BY id", (pid,))
+        rows = self.db.execute("SELECT * FROM images WHERE topic_id=? ORDER BY id", (pid,))
         return [dict(r, path=self.image_dir / r["file"]) for r in rows]
 
     def first_images(self) -> dict[int, Path]:
-        """problem id -> path of its first picture (for list thumbnails)."""
-        rows = self.db.execute("SELECT problem_id, file FROM images WHERE id IN "
-                               "(SELECT MIN(id) FROM images GROUP BY problem_id)")
-        return {r["problem_id"]: self.image_dir / r["file"] for r in rows}
+        """topic id -> path of its first picture (for list thumbnails)."""
+        rows = self.db.execute("SELECT topic_id, file FROM images WHERE id IN "
+                               "(SELECT MIN(id) FROM images GROUP BY topic_id)")
+        return {r["topic_id"]: self.image_dir / r["file"] for r in rows}
 
     def add_image(self, pid: int, source: Path | str) -> int:
-        """Copy a picture into <pictures folder>/TS-0003/ and attach it to the problem."""
+        """Copy a picture into <pictures folder>/TS-0003/ and attach it to the topic."""
         source = Path(source)
-        folder = self.problem_dir(pid) / "pictures"
+        folder = self.topic_dir(pid) / "pictures"
         folder.mkdir(parents=True, exist_ok=True)
         target, n = folder / source.name, 1
         while target.exists():
             target = folder / f"{source.stem}-{n}{source.suffix}"
             n += 1
         shutil.copy2(source, target)
-        cur = self.db.execute("INSERT INTO images(problem_id, file, added_at) VALUES (?,?,?)",
+        cur = self.db.execute("INSERT INTO images(topic_id, file, added_at) VALUES (?,?,?)",
                               (pid, f"{number(pid)}/pictures/{target.name}", today()))
         self.db.commit()
         self.touch(pid)
         return cur.lastrowid
 
     def delete_image(self, image_id: int) -> None:
-        row = self.db.execute("SELECT file, problem_id FROM images WHERE id=?", (image_id,)).fetchone()
+        row = self.db.execute("SELECT file, topic_id FROM images WHERE id=?", (image_id,)).fetchone()
         if row:
             self._remove_file(self.image_dir / row["file"])
         self.db.execute("DELETE FROM images WHERE id=?", (image_id,))
         self.db.commit()
         if row:
-            self.touch(row["problem_id"])
+            self.touch(row["topic_id"])
 
     def image_count(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM images").fetchone()[0]
 
-    def problem_folders(self) -> list[Path]:
+    def topic_folders(self) -> list[Path]:
         if not self.image_dir.exists():
             return []
         return sorted(p for p in self.image_dir.iterdir() if p.is_dir() and p.name.startswith("TS-"))
 
     def set_image_dir(self, new_dir: Path | str, move: bool = True) -> None:
-        """Point at a new files folder, moving every problem folder (pictures and your own files)."""
+        """Point at a new files folder, moving every topic folder (pictures and your own files)."""
         new_dir = Path(new_dir)
         new_dir.mkdir(parents=True, exist_ok=True)
         if move and new_dir.resolve() != self.image_dir.resolve():
-            for folder in self.problem_folders():
+            for folder in self.topic_folders():
                 target = new_dir / folder.name
                 if target.exists():
                     raise OSError(f"{target} already exists; not overwriting it.")
-            for folder in self.problem_folders():
+            for folder in self.topic_folders():
                 shutil.move(str(folder), str(new_dir / folder.name))
         self.image_dir = new_dir
 
     # ---- actions -----------------------------------------------------
     _ACTION_SQL = """
-        SELECT a.*, h.name AS owner, p.title AS problem_title, p.severity AS problem_severity,
+        SELECT a.*, h.name AS owner, p.title AS topic_title,
                p.project_id AS project_id, pr.name AS project
         FROM actions a
-        JOIN problems p ON p.id = a.problem_id
+        JOIN topics p ON p.id = a.topic_id
         LEFT JOIN projects pr ON pr.id = p.project_id
         LEFT JOIN people h ON h.id = a.owner_id
     """
 
     def actions(self, pid: int) -> list[dict]:
-        rows = self.db.execute(self._ACTION_SQL + " WHERE a.problem_id=? ORDER BY a.sort_order, a.id", (pid,))
+        rows = self.db.execute(self._ACTION_SQL + " WHERE a.topic_id=? ORDER BY a.sort_order, a.id", (pid,))
         return [dict(r) for r in rows]
 
     def open_actions(self, project_id: int | None = None) -> list[dict]:
@@ -472,50 +441,50 @@ class Store:
         if project_id:
             sql += " AND p.project_id = ?"
             args.append(project_id)
-        return [dict(r) for r in self.db.execute(sql + " ORDER BY a.problem_id, a.sort_order, a.id", args)]
+        return [dict(r) for r in self.db.execute(sql + " ORDER BY a.topic_id, a.sort_order, a.id", args)]
 
     def save_action(self, d: dict) -> int:
-        cols = ("problem_id", "description", "owner_id", "due_date", "status", "done_date")
+        cols = ("topic_id", "description", "owner_id", "due_date", "status", "done_date")
         if d.get("id"):
             self.db.execute(f"UPDATE actions SET {', '.join(c + '=?' for c in cols)} WHERE id=?",
                             [d[c] for c in cols] + [d["id"]])
             aid = d["id"]
         else:
-            nxt = (self.db.execute("SELECT MAX(sort_order) FROM actions WHERE problem_id=?",
-                                   (d["problem_id"],)).fetchone()[0] or 0) + 1
+            nxt = (self.db.execute("SELECT MAX(sort_order) FROM actions WHERE topic_id=?",
+                                   (d["topic_id"],)).fetchone()[0] or 0) + 1
             cur = self.db.execute(f"INSERT INTO actions({', '.join(cols)}, sort_order) "
                                   f"VALUES ({','.join('?' * len(cols))}, ?)", [d[c] for c in cols] + [nxt])
             aid = cur.lastrowid
         self.db.commit()
-        self.touch(d["problem_id"])
+        self.touch(d["topic_id"])
         return aid
 
     def move_action(self, aid: int, step: int) -> bool:
         """Swap an action with its neighbour above (step -1) or below (+1). False at the end of the list."""
-        row = self.db.execute("SELECT problem_id FROM actions WHERE id=?", (aid,)).fetchone()
+        row = self.db.execute("SELECT topic_id FROM actions WHERE id=?", (aid,)).fetchone()
         if not row:
             return False
         ids = [r["id"] for r in self.db.execute(
-            "SELECT id FROM actions WHERE problem_id=? ORDER BY sort_order, id", (row["problem_id"],))]
+            "SELECT id FROM actions WHERE topic_id=? ORDER BY sort_order, id", (row["topic_id"],))]
         i, j = ids.index(aid), ids.index(aid) + step
         if not 0 <= j < len(ids):
             return False
         ids[i], ids[j] = ids[j], ids[i]
         self.db.executemany("UPDATE actions SET sort_order=? WHERE id=?", [(n + 1, x) for n, x in enumerate(ids)])
         self.db.commit()
-        self.touch(row["problem_id"])
+        self.touch(row["topic_id"])
         return True
 
     def delete_action(self, aid: int) -> None:
-        row = self.db.execute("SELECT problem_id FROM actions WHERE id=?", (aid,)).fetchone()
+        row = self.db.execute("SELECT topic_id FROM actions WHERE id=?", (aid,)).fetchone()
         self.db.execute("DELETE FROM actions WHERE id=?", (aid,))
         self.db.commit()
         if row:
-            self.touch(row["problem_id"])
+            self.touch(row["topic_id"])
 
     # ---- demo data ---------------------------------------------------
     def seed_demo(self) -> None:
-        if self.db.execute("SELECT 1 FROM problems").fetchone():
+        if self.db.execute("SELECT 1 FROM topics").fetchone():
             return
         people = {n: self.add_item("people", n) for n in
                   ("Alex Rivera", "Sam Okafor", "Jordan Lee", "Priya Nair", "Maria Santos", "Tom Becker")}
@@ -614,18 +583,18 @@ class Store:
         ]
         for proj, title, sevname, cat, sub, champ, status, ago, desc, rc, acts in rows:
             created = (dt.date.today() - dt.timedelta(days=ago)).isoformat()
-            pid = self.save_problem(dict(project_id=projects[proj], title=title, severity_id=sev[sevname],
+            pid = self.save_topic(dict(project_id=projects[proj], title=title, severity_id=sev[sevname],
                                          description=desc, root_cause=rc, category_id=cats.get(cat),
                                          subcategory_id=subs.get((cat, sub)), champion_id=people[champ],
                                          status=status, closed_date=today() if status == "Closed" else "",
                                          created_at=f"{created}T09:00:00"))
             self._demo_pictures(pid, title)
             for text, owner, due_in, st in acts:
-                self.save_action(dict(problem_id=pid, description=text, owner_id=people[owner], due_date=d(due_in),
+                self.save_action(dict(topic_id=pid, description=text, owner_id=people[owner], due_date=d(due_in),
                                       status=st, done_date=today() if st == ACTION_DONE else ""))
             # make "updated" look lived-in: a few days after creation, never in the future
             upd = min(dt.date.today(), dt.date.fromisoformat(created) + dt.timedelta(days=2 + pid % 5))
-            self.db.execute("UPDATE problems SET updated_at=? WHERE id=?", (f"{upd.isoformat()}T16:30:00", pid))
+            self.db.execute("UPDATE topics SET updated_at=? WHERE id=?", (f"{upd.isoformat()}T16:30:00", pid))
             self.db.commit()
 
     def _demo_pictures(self, pid: int, title: str) -> None:
